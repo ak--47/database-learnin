@@ -1,4 +1,4 @@
-# Database Learnin
+# Database Learnin w/AK
 
 An interactive playground for exploring transactional vs. analytical databases using a good 'ol fashion **Web App** along with **SQLite** and **DuckDB**
 
@@ -23,7 +23,7 @@ An interactive playground for exploring transactional vs. analytical databases u
 
 1. **Clone**  
    ```bash
-   git clone <repo-url> && cd <repo-folder>
+   git clone https://github.com/ak--47/database-learnin.git && cd database-learnin
    ```
 2. **Start the dev server**  
    ```bash
