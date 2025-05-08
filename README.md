@@ -1,6 +1,11 @@
 # Database Learnin w/AK
 
-An interactive playground for exploring transactional vs. analytical databases using a good 'ol fashion **Web App** along with **SQLite** and **DuckDB**
+An interactive playground for exploring transactional vs. analytical databases using a good 'ol fashion **Web App** along with **SQLite** (Transactional) and **DuckDB** (Analytical)
+
+Recall that *transactional queries* (with SQLite) are all about dealing with individual single rows. `INSERT`, `UPDATE`, `DELETE`, you know... CRUD!
+
+By contrast *analytical queries* (with DuckDB) are all about dealing with the entire dataset, doing things like aggregations, window functions, fast scans... you know... analytics!
+
 
 ---
 
@@ -92,7 +97,65 @@ LIMIT 5;
 
 ---
 
+## 🛢 Example CRUD queries
+
+Here are some simple SQL operations you can run in any SQL shell; they are used to modify the state of the database:
+
+```sql
+-- Insert a new todo
+INSERT INTO todos (content, position)
+VALUES ('Write documentation', (SELECT MAX(position) + 1 FROM todos));
+
+-- Update an existing todo
+UPDATE todos
+SET content = 'Review pull request'
+WHERE id = 1;
+
+-- Delete a todo
+DELETE FROM todos
+WHERE id = 5;
+```
+---
+
+## 💾 Example Transactional Queries
+
+Here are some transactional queries which modify the state of the database, but do so in a more verbose way allowing for more complex operations:
+
+
+```sql
+-- Batch insert by placing multiple rows in a single transaction
+BEGIN TRANSACTION;
+INSERT INTO todos (content, position) VALUES
+  ('Batch task 1', (SELECT MAX(position)+1 FROM todos)),
+  ('Batch task 2', (SELECT MAX(position)+2 FROM todos)),
+  ('Batch task 3', (SELECT MAX(position)+3 FROM todos));
+COMMIT;
+```
+
+```sql
+-- Start a transaction but allow rollbacks
+BEGIN TRANSACTION;
+
+-- Change A
+UPDATE todos SET position = position + 1 WHERE id = 1;
+
+SAVEPOINT midway;   -- mark this spot
+
+-- Change B
+UPDATE todos SET position = position - 1 WHERE id = 2;
+
+-- Oops—don’t like Change B?
+ROLLBACK TO midway;   -- undoes Change B but keeps Change A
+
+-- Finalize
+COMMIT;
+```
+
+---
+
 ## 📈 Example Analytical Queries
+
+Here are some example analytical queries you can run in DuckDB, which are all about aggregating data and getting insights from the entire dataset:
 
 ```sql
 -- Count total todos
@@ -126,8 +189,3 @@ GROUP BY len_bucket;
   Make sure you’re in the folder containing `database.sqlite`, and that you passed the correct filename to `duckdb`.
 ---
 
-Remember:
-
-*Transactional queries with SQLite are about dealing with single rows → SELECT/INSERT/UPDATE/DELETE* (CRUD!)
-
-*Analytical queries with DuckDB are all about dealing with the entire dataset → aggregations, window functions, fast scans* (you know... analytics!)
