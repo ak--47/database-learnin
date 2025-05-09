@@ -15,6 +15,9 @@
 		h1,
 		h2 {
 			text-align: center;
+			margin-top: 0.25em;
+			margin-bottom: 0.25em;
+			padding-bottom: 0.25em;
 		}
 
 		#controls {
@@ -66,6 +69,20 @@
 			white-space: pre-wrap;
 			word-break: break-word;
 		}
+
+		/* keep the todo list from growing past 50% of viewport height */
+		#todo-list {
+			max-height: 40vh;
+			overflow-y: auto;
+			padding: 0;
+			margin-bottom: 1em;
+		}
+
+		/* optional: give it a subtle inner shadow so you know it scrolls */
+		#todo-list {
+			box-shadow: inset 0 6px 6px -6px rgba(0, 0, 0, 0.1),
+				inset 0 -6px 6px -6px rgba(0, 0, 0, 0.1);
+		}
 	</style>
 	<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.6.2/sql-wasm.js"></script>
 </head>
@@ -88,6 +105,8 @@
 			disabled>Migrate to v2</button>
 		<button id="migrate-down"
 			disabled>Rollback to v1</button>
+		<button id="seed"
+			disabled>Seed</button>
 		<button id="delete-db"
 			disabled>Delete DB</button>
 	</div>
@@ -100,6 +119,34 @@
 	<script>
 		let SQL, db, dirHandle, fileHandle;
 
+		// 50-item stock pool
+		const stockTodos = [
+			"Summon printer dragon", "Warp TPS reports", "Pet the quantum stapler",
+			"Feed coffee to the server", "Negotiate with office cactus",
+			"Teleport chair to Mars", "Encrypt snack signals", "Chase rogue spreadsheet",
+			"Debug existential crisis", "Train squirrels as interns",
+			"Calibrate moon cheese sensor", "Refactor unicorn module",
+			"Optimize office trampoline", "Audit invisible ink ledger",
+			"Bake cookies for the server", "Implement reverse psychology",
+			"Schedule time travel session", "Translate binary poetry",
+			"Synchronize office shadows", "Mute the screaming printer",
+			"Juggle virtual bananas", "Amplify silent alarms",
+			"Untangle spaghetti code", "Map the coffee galaxy",
+			"Harvest pixel rainbows", "Frame error 404 art",
+			"Debug haunting poltergeists", "Assemble LEGO database",
+			"Train AI pet rock", "Reverse engineer sarcasm",
+			"Program dancing lights", "Stop time anomalies",
+			"Bake a binary cake", "Conquer post-it note fort",
+			"Document secret handshake", "Massage fractal diagrams",
+			"Brew invisibility potion", "Clone rubber duck debugger",
+			"Animate sleeping desks", "Summon tax form genie",
+			"Prototype teleporting pen", "Encrypt ham sandwich",
+			"Interview office spider", "Simulate Monday morning",
+			"Debug time paradox", "Paint ASCII mural",
+			"Generate pun backlog", "Synchronize cat memes",
+			"Escape infinite loop", "Virtualize snack break"
+		];
+
 		// Load SQL.js
 		initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.6.2/${f}` })
 			.then(lib => { SQL = lib; })
@@ -110,12 +157,29 @@
 			document.getElementById('sql-console')
 				.textContent += `> ${sql} ${JSON.stringify(params)}\n\n`;
 			db.run(sql, params);
-			const data = db.export();
-			const blob = new Blob([data], { type: 'application/x-sqlite3' });
+			const blob = new Blob([db.export()], { type: 'application/x-sqlite3' });
 			const w = await fileHandle.createWritable();
 			await w.write(blob);
 			await w.close();
 			if (!skipRender) renderList();
+		}
+
+		// Seed 5 random todos from stockTodos
+		async function seedTodos() {
+			// shuffle & pick first 5
+			const picks = stockTodos
+				.map(v => ({ v, r: Math.random() }))
+				.sort((a, b) => a.r - b.r)
+				.slice(0, 5)
+				.map(o => o.v);
+
+			for (const item of picks) {
+				const [[maxPos]] = db.exec("SELECT COALESCE(MAX(position),0) FROM todos")[0].values;
+				await execAndPersist(
+					"INSERT INTO todos (content, position) VALUES (?, ?)",
+					[item, maxPos + 1]
+				);
+			}
 		}
 
 		// Migrate up: add done column
@@ -127,7 +191,7 @@
 			updateMigrationControls();
 		}
 
-		// Migrate down: drop done by table rebuild
+		// Migrate down: drop done via table rebuild
 		async function migrateDown() {
 			const steps = [
 				"BEGIN TRANSACTION;",
@@ -151,14 +215,20 @@
 			renderList();
 		}
 
-		// Enable/disable migration buttons
+		// Enable/disable migrate buttons
 		function updateMigrationControls() {
 			const ver = db.exec("PRAGMA user_version")[0].values[0][0];
 			document.getElementById('migrate-up').disabled = ver >= 2;
 			document.getElementById('migrate-down').disabled = ver < 2;
 		}
 
-		// Render list (handles v1 & v2)
+		// Delete DB file + reload
+		async function deleteDatabase() {
+			await dirHandle.removeEntry('database.sqlite');
+			location.reload();
+		}
+
+		// Render list (v1 vs v2)
 		function renderList() {
 			const out = document.getElementById('todo-list');
 			out.innerHTML = '';
@@ -261,13 +331,7 @@
 			document.getElementById('new-item').value = '';
 		}
 
-		// Delete the DB file and reload
-		async function deleteDatabase() {
-			await dirHandle.removeEntry('database.sqlite');
-			location.reload();
-		}
-
-		// Open/create DB, build or migrate to v1, then seed & set version=1
+		// Open/create DB & seed/migrate to v1
 		async function openDatabase() {
 			dirHandle = await window.showDirectoryPicker();
 			fileHandle = await dirHandle.getFileHandle('database.sqlite', { create: true });
@@ -287,18 +351,9 @@
              position INTEGER NOT NULL
            );`
 				);
-				// Original 10 seed (or your random-5 logic here)
-				const stockTodos = [
-					"Summon printer dragon", "Warp TPS reports", "Pet the quantum stapler", "Feed coffee to the server", "Negotiate with office cactus", "Teleport chair to Mars", "Encrypt snack signals", "Chase rogue spreadsheet", "Debug existential crisis", "Train squirrels as interns", "Recalibrate time-traveling sticky notes", "Hypnotize the copy machine", "Install anti-gravity in the break room", "Decode messages from the office plant", "Invert the WiFi dimension", "Teach the microwave quantum physics", "Replace keyboard with tiny pianos", "Upload consciousness to the cloud drive", "Defragment the office ghost", "Reunite separated sock puppets", "Translate cat emails into human language", "Politely decline meeting with parallel universe", "Refactor the space-time continuum", "Reboot the office mood lighting", "Convince staplers they're not paper clips", "Conduct telepathic stand-up meeting", "Deflect incoming passive-aggressive emails", "Disarm the sentient coffee maker", "Update firmware on office chair", "Barter with vending machine spirits", "Optimize desk plant photosynthesis algorithm", "Archive interdimensional paperwork", "Reverse-engineer Monday motivation", "Upgrade brain to Windows 11", "Calibrate office chair orbit", "Soothe the anxious whiteboard", "Interview potential alternate timelines", "Debug the office feng shui", "Realign chakras of the database", "Manifest donuts using pure willpower", "Negotiate peace between Mac and PC users", "Summon the spirit of productivity", "Banish water cooler demons", "Restore harmony to office supply drawer", "Install neural network in the potted plant", "Distill espresso from raw code", "Fold space to reach bathroom faster", "Perform rain dance for cloud backups", "Mine cryptocurrency with brain waves", "Convince calendar that time is an illusion"
-				];
-				const seed = stockTodos.sort(() => Math.random() - 0.5).slice(0, 5);
-				for (let i = 0; i < seed.length; i++) {
-					await execAndPersist(
-						"INSERT INTO todos (content, position) VALUES (?, ?)",
-						[stockTodos[i], i + 1]
-					);
-				}
-				// Mark version=1 without triggering render
+				// Seed initial 5
+				await seedTodos();
+				// Mark version=1 without render
 				await execAndPersist("PRAGMA user_version = 1", [], true);
 			} else {
 				// Ensure user_version ≥1
@@ -308,24 +363,23 @@
 				}
 			}
 
-			// Enable all controls
-			['new-item', 'add-item', 'clear-console', 'migrate-up', 'migrate-down', 'delete-db']
+			// Enable controls
+			['new-item', 'add-item', 'clear-console', 'migrate-up', 'migrate-down', 'seed', 'delete-db']
 				.forEach(id => document.getElementById(id).disabled = false);
 
 			updateMigrationControls();
 			renderList();
 		}
 
-		// Wire everything up
+		// Wire up events
 		document.getElementById('open-db').onclick = openDatabase;
 		document.getElementById('add-item').onclick = () => addItem(document.getElementById('new-item').value);
 		document.getElementById('new-item')
 			.addEventListener('keydown', e => { if (e.key === 'Enter') addItem(e.target.value); });
-		document.getElementById('clear-console').onclick = () => {
-			document.getElementById('sql-console').textContent = '';
-		};
+		document.getElementById('clear-console').onclick = () => { document.getElementById('sql-console').textContent = ''; };
 		document.getElementById('migrate-up').onclick = migrateUp;
 		document.getElementById('migrate-down').onclick = migrateDown;
+		document.getElementById('seed').onclick = seedTodos;
 		document.getElementById('delete-db').onclick = deleteDatabase;
 	</script>
 </body>
