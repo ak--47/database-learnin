@@ -1,0 +1,263 @@
+<!DOCTYPE html>
+<html lang="en">
+
+<head>
+	<meta charset="UTF-8">
+	<title>Learn Me a Database</title>
+	<style>
+		body {
+			font-family: sans-serif;
+			max-width: 70%;
+			margin: 2em auto;
+			padding: 0 1em;
+		}
+
+		h1,
+		h2 {
+			text-align: center;
+		}
+
+		#controls {
+			display: flex;
+			flex-wrap: wrap;
+			gap: 0.5em;
+			margin-bottom: 1em;
+		}
+
+		#controls>* {
+			flex: 1;
+			min-width: 100px;
+		}
+
+		#new-item {
+			flex: 2 1 200px;
+		}
+
+		ul {
+			list-style: none;
+			padding: 0;
+			margin-bottom: 1em;
+		}
+
+		li {
+			background: #f9f9f9;
+			margin: 0.5em 0;
+			padding: 0.75em;
+			display: flex;
+			justify-content: space-between;
+			align-items: center;
+		}
+
+		.btns button {
+			margin-left: 0.25em;
+		}
+
+		pre#sql-console {
+			background: #f4f4f4;
+			border: 1px solid #ccc;
+			padding: 1em;
+			height: 200px;
+			overflow: auto;
+			white-space: pre-wrap;
+			word-break: break-word;
+		}
+	</style>
+	<!-- SQL.js (WASM) -->
+	<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.6.2/sql-wasm.js"></script>
+</head>
+
+<body>
+	<h1>📝 Database Learnin with AK</h1>
+	<h2>the quintessential todolist</h2>
+	<div id="controls">
+		<button id="open-db">Choose Folder...</button>
+		<input id="new-item"
+			type="text"
+			placeholder="New todo item…"
+			disabled>
+		<button id="add-item"
+			disabled>Add</button>
+		<button id="clear-console"
+			disabled>Clear Console</button>
+	</div>
+
+	<ul id="todo-list"></ul>
+
+	<h2>SQL Console</h2>
+	<pre id="sql-console"></pre>
+
+	<script>
+		let SQL, db, dirHandle, fileHandle;
+
+		// Load SQL.js
+		initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.6.2/${f}` })
+			.then(lib => { SQL = lib; })
+			.catch(err => console.error("Failed to load SQL.js:", err));
+
+		// Utility: execute SQL, log it, persist, then re-render
+		async function execAndPersist(sql, params = []) {
+			// Log
+			const consoleEl = document.getElementById('sql-console');
+			consoleEl.textContent += `> ${sql} ${JSON.stringify(params)}\n`;
+
+			// Execute
+			db.run(sql, params);
+
+			// Persist immediately
+			const data = db.export();
+			const blob = new Blob([data], { type: 'application/x-sqlite3' });
+			const writable = await fileHandle.createWritable();
+			await writable.write(blob);
+			await writable.close();
+
+			// Update UI
+			renderList();
+		}
+
+		// Render the todo list from the DB
+		function renderList() {
+			const out = document.getElementById('todo-list');
+			out.innerHTML = '';
+			const res = db.exec("SELECT id, content FROM todos ORDER BY position");
+			if (!res[0]) return;
+			for (const [id, content] of res[0].values) {
+				const li = document.createElement('li');
+				li.textContent = content;
+				const btns = document.createElement('span');
+				btns.className = 'btns';
+
+				// ↑
+				const up = document.createElement('button');
+				up.textContent = '↑';
+				up.onclick = async () => {
+					const [[pos]] = db.exec("SELECT position FROM todos WHERE id = ?", [id])[0].values;
+					const above = db.exec(
+						"SELECT id, position FROM todos WHERE position < ? ORDER BY position DESC LIMIT 1",
+						[pos]
+					);
+					if (!above[0]) return;
+					const [bId, bPos] = above[0].values[0];
+					await execAndPersist(
+						`UPDATE todos
+				 SET position = CASE id
+				   WHEN ? THEN ?
+				   WHEN ? THEN ?
+				 END
+				 WHERE id IN (?, ?)`,
+						[id, bPos, bId, pos, id, bId]
+					);
+				};
+
+				// ↓
+				const down = document.createElement('button');
+				down.textContent = '↓';
+				down.onclick = async () => {
+					const [[pos]] = db.exec("SELECT position FROM todos WHERE id = ?", [id])[0].values;
+					const below = db.exec(
+						"SELECT id, position FROM todos WHERE position > ? ORDER BY position ASC LIMIT 1",
+						[pos]
+					);
+					if (!below[0]) return;
+					const [bId, bPos] = below[0].values[0];
+					await execAndPersist(
+						`UPDATE todos
+				 SET position = CASE id
+				   WHEN ? THEN ?
+				   WHEN ? THEN ?
+				 END
+				 WHERE id IN (?, ?)`,
+						[id, bPos, bId, pos, id, bId]
+					);
+				};
+
+				// ✕
+				const del = document.createElement('button');
+				del.textContent = '✕';
+				del.onclick = async () => {
+					await execAndPersist("DELETE FROM todos WHERE id = ?", [id]);
+				};
+
+				btns.append(up, down, del);
+				li.append(btns);
+				out.append(li);
+			}
+		}
+
+		// Add a new todo
+		async function addItem(text) {
+			if (!text.trim()) return;
+			const [[maxPos]] = db.exec("SELECT COALESCE(MAX(position),0) FROM todos")[0].values;
+			await execAndPersist(
+				"INSERT INTO todos (content, position) VALUES (?, ?)",
+				[text, maxPos + 1]
+			);
+			document.getElementById('new-item').value = '';
+		}
+
+		// Open/Create database.sqlite & optionally seed
+		async function openDatabase() {
+			// pick a folder
+			dirHandle = await window.showDirectoryPicker();
+			// get (or create) database.sqlite
+			fileHandle = await dirHandle.getFileHandle('database.sqlite', { create: true });
+
+			// read existing contents
+			const file = await fileHandle.getFile();
+			const buf = await file.arrayBuffer();
+			const u8 = new Uint8Array(buf);
+
+			if (u8.byteLength) {
+				// existing DB → just load
+				db = new SQL.Database(u8);
+
+			} else {
+				// brand-new DB → create schema + seed via execAndPersist
+				db = new SQL.Database();
+
+				// CREATE TABLE
+				await execAndPersist(
+					`CREATE TABLE todos (
+				 id INTEGER PRIMARY KEY AUTOINCREMENT,
+				 content TEXT NOT NULL,
+				 position INTEGER NOT NULL
+			   );`
+				);
+
+				// weird/chaotic seed items
+				const stockTodos = [
+					"Summon printer dragon", "Warp TPS reports", "Pet the quantum stapler", "Feed coffee to the server", "Negotiate with office cactus", "Teleport chair to Mars", "Encrypt snack signals", "Chase rogue spreadsheet", "Debug existential crisis", "Train squirrels as interns", "Recalibrate time-traveling sticky notes", "Hypnotize the copy machine", "Install anti-gravity in the break room", "Decode messages from the office plant", "Invert the WiFi dimension", "Teach the microwave quantum physics", "Replace keyboard with tiny pianos", "Upload consciousness to the cloud drive", "Defragment the office ghost", "Reunite separated sock puppets", "Translate cat emails into human language", "Politely decline meeting with parallel universe", "Refactor the space-time continuum", "Reboot the office mood lighting", "Convince staplers they're not paper clips", "Conduct telepathic stand-up meeting", "Deflect incoming passive-aggressive emails", "Disarm the sentient coffee maker", "Update firmware on office chair", "Barter with vending machine spirits", "Optimize desk plant photosynthesis algorithm", "Archive interdimensional paperwork", "Reverse-engineer Monday motivation", "Upgrade brain to Windows 11", "Calibrate office chair orbit", "Soothe the anxious whiteboard", "Interview potential alternate timelines", "Debug the office feng shui", "Realign chakras of the database", "Manifest donuts using pure willpower", "Negotiate peace between Mac and PC users", "Summon the spirit of productivity", "Banish water cooler demons", "Restore harmony to office supply drawer", "Install neural network in the potted plant", "Distill espresso from raw code", "Fold space to reach bathroom faster", "Perform rain dance for cloud backups", "Mine cryptocurrency with brain waves", "Convince calendar that time is an illusion"
+				];
+				const seed = stockTodos.sort(() => Math.random() - 0.5).slice(0, 4);
+
+				// INSERT each seed row
+				for (let i = 0; i < seed.length; i++) {
+					await execAndPersist(
+						"INSERT INTO todos (content, position) VALUES (?, ?)",
+						[seed[i], i + 1]
+					);
+				}
+			}
+
+			// enable the rest of the UI
+			document.getElementById('new-item').disabled = false;
+			document.getElementById('add-item').disabled = false;
+			document.getElementById('clear-console').disabled = false;
+
+			// render whatever’s in the DB
+			renderList();
+		}
+
+		// 6) Clear console button
+		document.getElementById('clear-console').onclick = () => {
+			document.getElementById('sql-console').textContent = '';
+		};
+
+		// 7) Wire up the buttons and Enter key
+		document.getElementById('open-db').onclick = openDatabase;
+		document.getElementById('add-item').onclick = () =>
+			addItem(document.getElementById('new-item').value);
+		document.getElementById('new-item')
+			.addEventListener('keydown', e => { if (e.key === 'Enter') addItem(e.target.value); });
+	</script>
+</body>
+</html>
