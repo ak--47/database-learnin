@@ -1,271 +1,250 @@
 <!DOCTYPE html>
 <html lang="en">
-
 <head>
-	<meta charset="UTF-8">
-	<title>Learn Me a Database</title>
-	<style>
-		body {
-			font-family: sans-serif;
-			max-width: 70%;
-			margin: 2em auto;
-			padding: 0 1em;
-		}
-
-		h1,
-		h2 {
-			text-align: center;
-		}
-
-		#controls {
-			display: flex;
-			flex-wrap: wrap;
-			gap: 0.5em;
-			margin-bottom: 1em;
-		}
-
-		#controls>* {
-			flex: 1;
-			min-width: 100px;
-		}
-
-		#new-item {
-			flex: 2 1 200px;
-		}
-
-		ul {
-			list-style: none;
-			padding: 0;
-			margin-bottom: 1em;
-		}
-
-		li {
-			background: #f9f9f9;
-			margin: 0.5em 0;
-			padding: 0.75em;
-			display: flex;
-			justify-content: space-between;
-			align-items: center;
-		}
-
-		.btns button {
-			margin-left: 0.25em;
-		}
-
-		pre#sql-console {
-			background: #f4f4f4;
-			border: 1px solid #ccc;
-			padding: 1em;
-			height: 200px;
-			overflow: auto;
-			white-space: pre-wrap;
-			word-break: break-word;
-		}
-	</style>
-	<!-- SQL.js (WASM) -->
-	<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.6.2/sql-wasm.js"></script>
+  <meta charset="UTF-8">
+  <title>Learn Me a Database ➔ Todos with Cross-Off</title>
+  <style>
+    body {
+      font-family: sans-serif;
+      max-width: 70%;
+      margin: 2em auto;
+      padding: 0 1em;
+	  font-size: 14px;
+    }
+    h1, h2 {
+      text-align: center;
+    }
+    #controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 0.5em;
+      margin-bottom: 1em;
+    }
+    #controls>* {
+      flex: 1;
+      min-width: 100px;
+    }
+    #new-item { flex: 2 1 200px; }
+    ul {
+      list-style: none;
+      padding: 0;
+      margin-bottom: 1em;
+    }
+    li {
+      background: #f9f9f9;
+      margin: .5em 0;
+      padding: .75em;
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+    }
+    li.done span.content {
+      text-decoration: line-through;
+      color: #888;
+    }
+    .btns button {
+      margin-left: .25em;
+    }
+    pre#sql-console {
+      background: #f4f4f4;
+      border: 1px solid #ccc;
+      padding: 1em;
+      height: 200px;
+      overflow: auto;
+      white-space: pre-wrap;
+      word-break: break-word;
+    }
+  </style>
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.6.2/sql-wasm.js"></script>
 </head>
-
 <body>
-	<h1>📝 Database Learnin with AK</h1>
-	<h2>the quintessential todolist</h2>
-	<div id="controls">
-		<button id="open-db">Choose Folder...</button>
-		<input id="new-item"
-			type="text"
-			placeholder="New todo item…"
-			disabled>
-		<button id="add-item"
-			disabled>Add</button>
-		<button id="clear-console"
-			disabled>Clear Console</button>
-	</div>
+  <h1>📝 Database Learnin with AK</h1>
+  <h2>the quintessential todolist</h2>
 
-	<ul id="todo-list"></ul>
+  <div id="controls">
+    <button id="open-db">Choose Folder...</button>
+    <input id="new-item" type="text" placeholder="New todo item…" disabled>
+    <button id="add-item" disabled>Add</button>
+    <button id="clear-console" disabled>Clear Console</button>
+  </div>
 
-	<h2>SQL Console</h2>
-	<pre id="sql-console"></pre>
+  <ul id="todo-list"></ul>
 
-	<script>
-		let SQL, db, dirHandle, fileHandle;
+  <h2>SQL Console</h2>
+  <pre id="sql-console"></pre>
 
-		// 1) Load SQL.js
-		initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.6.2/${f}` })
-			.then(lib => { SQL = lib; })
-			.catch(err => console.error("Failed to load SQL.js:", err));
+  <script>
+    let SQL, db, dirHandle, fileHandle;
 
-		// 2) Utility: execute SQL, log it, persist, then re-render
-		async function execAndPersist(sql, params = []) {
-			// 2a) Log
-			const consoleEl = document.getElementById('sql-console');
-			consoleEl.textContent += `> ${sql} ${JSON.stringify(params)}\n`;
+    // 1) Load SQL.js
+    initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.6.2/${f}` })
+      .then(lib => { SQL = lib; })
+      .catch(err => console.error("Failed to load SQL.js:", err));
 
-			// 2b) Execute
-			db.run(sql, params);
+    // 2) Exec+persist helper
+    async function execAndPersist(sql, params = []) {
+      document.getElementById('sql-console').textContent += `> ${sql} ${JSON.stringify(params)}\n`;
+      db.run(sql, params);
+      const data = db.export();
+      const blob = new Blob([data], { type: 'application/x-sqlite3' });
+      const w = await fileHandle.createWritable();
+      await w.write(blob);
+      await w.close();
+      renderList();
+    }
 
-			// 2c) Persist immediately
-			const data = db.export();
-			const blob = new Blob([data], { type: 'application/x-sqlite3' });
-			const writable = await fileHandle.createWritable();
-			await writable.write(blob);
-			await writable.close();
+    // 3) Render
+    function renderList() {
+      const out = document.getElementById('todo-list');
+      out.innerHTML = '';
+      const res = db.exec("SELECT id, content, done FROM todos ORDER BY position");
+      if (!res[0]) return;
+      for (const [id, content, done] of res[0].values) {
+        const li = document.createElement('li');
+        if (done) li.classList.add('done');
 
-			// 2d) Update UI
-			renderList();
-		}
+        const chk = document.createElement('input');
+        chk.type = 'checkbox';
+        chk.checked = !!done;
+        chk.onchange = () => execAndPersist(
+          "UPDATE todos SET done = ? WHERE id = ?",
+          [chk.checked ? 1 : 0, id]
+        );
 
-		// 3) Render the todo list from the DB
-		function renderList() {
-			const out = document.getElementById('todo-list');
-			out.innerHTML = '';
-			const res = db.exec("SELECT id, content FROM todos ORDER BY position");
-			if (!res[0]) return;
-			for (const [id, content] of res[0].values) {
-				const li = document.createElement('li');
-				li.textContent = content;
-				const btns = document.createElement('span');
-				btns.className = 'btns';
+        const txt = document.createElement('span');
+        txt.className = 'content';
+        txt.textContent = content;
 
-				// ↑
-				const up = document.createElement('button');
-				up.textContent = '↑';
-				up.onclick = async () => {
-					const [[pos]] = db.exec("SELECT position FROM todos WHERE id = ?", [id])[0].values;
-					const above = db.exec(
-						"SELECT id, position FROM todos WHERE position < ? ORDER BY position DESC LIMIT 1",
-						[pos]
-					);
-					if (!above[0]) return;
-					const [bId, bPos] = above[0].values[0];
-					await execAndPersist(
-						`UPDATE todos
-				 SET position = CASE id
-				   WHEN ? THEN ?
-				   WHEN ? THEN ?
-				 END
-				 WHERE id IN (?, ?)`,
-						[id, bPos, bId, pos, id, bId]
-					);
-				};
+        const btns = document.createElement('span');
+        btns.className = 'btns';
 
-				// ↓
-				const down = document.createElement('button');
-				down.textContent = '↓';
-				down.onclick = async () => {
-					const [[pos]] = db.exec("SELECT position FROM todos WHERE id = ?", [id])[0].values;
-					const below = db.exec(
-						"SELECT id, position FROM todos WHERE position > ? ORDER BY position ASC LIMIT 1",
-						[pos]
-					);
-					if (!below[0]) return;
-					const [bId, bPos] = below[0].values[0];
-					await execAndPersist(
-						`UPDATE todos
-				 SET position = CASE id
-				   WHEN ? THEN ?
-				   WHEN ? THEN ?
-				 END
-				 WHERE id IN (?, ?)`,
-						[id, bPos, bId, pos, id, bId]
-					);
-				};
+        // up
+        const up = document.createElement('button');
+        up.textContent = '↑';
+        up.onclick = async () => {
+          const [[pos]] = db.exec("SELECT position FROM todos WHERE id = ?", [id])[0].values;
+          const above = db.exec(
+            "SELECT id, position FROM todos WHERE position < ? ORDER BY position DESC LIMIT 1",
+            [pos]
+          );
+          if (!above[0]) return;
+          const [bId, bPos] = above[0].values[0];
+          await execAndPersist(
+            `UPDATE todos SET position = CASE id
+               WHEN ? THEN ?
+               WHEN ? THEN ?
+             END
+             WHERE id IN (?, ?)`,
+            [id, bPos, bId, pos, id, bId]
+          );
+        };
 
-				// ✕
-				const del = document.createElement('button');
-				del.textContent = '✕';
-				del.onclick = async () => {
-					await execAndPersist("DELETE FROM todos WHERE id = ?", [id]);
-				};
+        // down
+        const down = document.createElement('button');
+        down.textContent = '↓';
+        down.onclick = async () => {
+          const [[pos]] = db.exec("SELECT position FROM todos WHERE id = ?", [id])[0].values;
+          const below = db.exec(
+            "SELECT id, position FROM todos WHERE position > ? ORDER BY position ASC LIMIT 1",
+            [pos]
+          );
+          if (!below[0]) return;
+          const [bId, bPos] = below[0].values[0];
+          await execAndPersist(
+            `UPDATE todos SET position = CASE id
+               WHEN ? THEN ?
+               WHEN ? THEN ?
+             END
+             WHERE id IN (?, ?)`,
+            [id, bPos, bId, pos, id, bId]
+          );
+        };
 
-				btns.append(up, down, del);
-				li.append(btns);
-				out.append(li);
-			}
-		}
+        // delete
+        const del = document.createElement('button');
+        del.textContent = '✕';
+        del.onclick = () => execAndPersist("DELETE FROM todos WHERE id = ?", [id]);
 
-		// 4) Add a new todo
-		async function addItem(text) {
-			if (!text.trim()) return;
-			const [[maxPos]] = db.exec("SELECT COALESCE(MAX(position),0) FROM todos")[0].values;
-			await execAndPersist(
-				"INSERT INTO todos (content, position) VALUES (?, ?)",
-				[text, maxPos + 1]
-			);
-			document.getElementById('new-item').value = '';
-		}
+        btns.append(up, down, del);
+        li.append(chk, txt, btns);
+        out.append(li);
+      }
+    }
 
-		// 5) Open/Create database.sqlite & optionally seed
-		async function openDatabase() {
-			// pick a folder
-			dirHandle = await window.showDirectoryPicker();
-			// get (or create) database.sqlite
-			fileHandle = await dirHandle.getFileHandle('database.sqlite', { create: true });
+    // 4) Add
+    async function addItem(text) {
+      if (!text.trim()) return;
+      const [[maxPos]] = db.exec("SELECT COALESCE(MAX(position),0) FROM todos")[0].values;
+      await execAndPersist(
+        "INSERT INTO todos (content, position, done) VALUES (?, ?, ?)",
+        [text, maxPos + 1, 0]
+      );
+      document.getElementById('new-item').value = '';
+    }
 
-			// read existing contents
-			const file = await fileHandle.getFile();
-			const buf = await file.arrayBuffer();
-			const u8 = new Uint8Array(buf);
+    // 5) Open/Create & migrate/seed
+    async function openDatabase() {
+      dirHandle   = await window.showDirectoryPicker();
+      fileHandle  = await dirHandle.getFileHandle('database.sqlite', { create: true });
+      const file   = await fileHandle.getFile();
+      const u8     = new Uint8Array(await file.arrayBuffer());
+      db = new SQL.Database(u8);
 
-			if (u8.byteLength) {
-				// existing DB → just load
-				db = new SQL.Database(u8);
+      // Check if todos table exists
+      const tables = db.exec(
+        "SELECT name FROM sqlite_master WHERE type='table' AND name='todos';"
+      );
+      if (!tables[0]) {
+        // create table with done
+        await execAndPersist(
+          `CREATE TABLE todos (
+             id INTEGER PRIMARY KEY AUTOINCREMENT,
+             content TEXT NOT NULL,
+             position INTEGER NOT NULL,
+             done INTEGER NOT NULL DEFAULT 0
+           );`
+        );
+        // seed
+        const seed = [
+          "Summon printer dragon","Warp TPS reports","Pet the quantum stapler",
+          "Feed coffee to the server","Negotiate with office cactus",
+          "Teleport chair to Mars","Encrypt snack signals",
+          "Chase rogue spreadsheet","Debug existential crisis",
+          "Train squirrels as interns"
+        ];
+        for (let i = 0; i < seed.length; i++) {
+          await execAndPersist(
+            "INSERT INTO todos (content, position, done) VALUES (?, ?, ?)",
+            [seed[i], i+1, 0]
+          );
+        }
+      } else {
+        // table exists → ensure done column
+        const cols = db.exec("PRAGMA table_info(todos);")[0].values.map(r => r[1]);
+        if (!cols.includes('done')) {
+          await execAndPersist(
+            "ALTER TABLE todos ADD COLUMN done INTEGER NOT NULL DEFAULT 0"
+          );
+        }
+      }
 
-			} else {
-				// brand-new DB → create schema + seed via execAndPersist
-				db = new SQL.Database();
+      document.getElementById('new-item').disabled      = false;
+      document.getElementById('add-item').disabled      = false;
+      document.getElementById('clear-console').disabled = false;
+      renderList();
+    }
 
-				// CREATE TABLE
-				await execAndPersist(
-					`CREATE TABLE todos (
-				 id INTEGER PRIMARY KEY AUTOINCREMENT,
-				 content TEXT NOT NULL,
-				 position INTEGER NOT NULL
-			   );`
-				);
+    // 6) Clear console
+    document.getElementById('clear-console').onclick = () => {
+      document.getElementById('sql-console').textContent = '';
+    };
 
-				// weird/chaotic seed items
-				const seed = [
-					"Summon printer dragon",
-					"Warp TPS reports",
-					"Pet the quantum stapler",
-					"Feed coffee to the server",
-					"Negotiate with office cactus",
-					"Teleport chair to Mars",
-					"Encrypt snack signals",
-					"Chase rogue spreadsheet",
-					"Debug existential crisis",
-					"Train squirrels as interns"
-				];
-
-				// INSERT each seed row
-				for (let i = 0; i < seed.length; i++) {
-					await execAndPersist(
-						"INSERT INTO todos (content, position) VALUES (?, ?)",
-						[seed[i], i + 1]
-					);
-				}
-			}
-
-			// enable the rest of the UI
-			document.getElementById('new-item').disabled = false;
-			document.getElementById('add-item').disabled = false;
-			document.getElementById('clear-console').disabled = false;
-
-			// render whatever’s in the DB
-			renderList();
-		}
-
-		// 6) Clear console button
-		document.getElementById('clear-console').onclick = () => {
-			document.getElementById('sql-console').textContent = '';
-		};
-
-		// 7) Wire up the buttons and Enter key
-		document.getElementById('open-db').onclick = openDatabase;
-		document.getElementById('add-item').onclick = () =>
-			addItem(document.getElementById('new-item').value);
-		document.getElementById('new-item')
-			.addEventListener('keydown', e => { if (e.key === 'Enter') addItem(e.target.value); });
-	</script>
+    // 7) Wire UI
+    document.getElementById('open-db').onclick  = openDatabase;
+    document.getElementById('add-item').onclick = () =>
+      addItem(document.getElementById('new-item').value);
+    document.getElementById('new-item')
+      .addEventListener('keydown', e => { if (e.key === 'Enter') addItem(e.target.value); });
+  </script>
 </body>
 </html>
