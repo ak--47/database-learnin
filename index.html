@@ -3,7 +3,7 @@
 
 <head>
 	<meta charset="UTF-8">
-	<title>Learn Me a Database</title>
+	<title>Learn Me a Database ➔ Migration Demo</title>
 	<style>
 		body {
 			font-family: sans-serif;
@@ -15,6 +15,9 @@
 		h1,
 		h2 {
 			text-align: center;
+			margin-top: 0.25em;
+			margin-bottom: 0.25em;
+			padding-bottom: 0.25em;
 		}
 
 		#controls {
@@ -41,36 +44,55 @@
 
 		li {
 			background: #f9f9f9;
-			margin: 0.5em 0;
-			padding: 0.75em;
+			margin: .5em 0;
+			padding: .75em;
 			display: flex;
-			justify-content: space-between;
 			align-items: center;
+			justify-content: space-between;
+		}
+
+		li.done span.content {
+			text-decoration: line-through;
+			color: #888;
 		}
 
 		.btns button {
-			margin-left: 0.25em;
+			margin-left: .25em;
 		}
 
 		pre#sql-console {
 			background: #f4f4f4;
 			border: 1px solid #ccc;
 			padding: 1em;
-			height: 200px;
+			height: 300px;
 			overflow: auto;
 			white-space: pre-wrap;
 			word-break: break-word;
 		}
+
+		/* keep the todo list from growing past 50% of viewport height */
+		#todo-list {
+			max-height: 40vh;
+			overflow-y: auto;
+			padding: 0;
+			margin-bottom: 1em;
+		}
+
+		/* optional: give it a subtle inner shadow so you know it scrolls */
+		#todo-list {
+			box-shadow: inset 0 6px 6px -6px rgba(0, 0, 0, 0.1),
+				inset 0 -6px 6px -6px rgba(0, 0, 0, 0.1);
+		}
 	</style>
-	<!-- SQL.js (WASM) -->
 	<script src="https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.6.2/sql-wasm.js"></script>
 </head>
 
 <body>
 	<h1>📝 Database Learnin with AK</h1>
 	<h2>the quintessential todolist</h2>
+
 	<div id="controls">
-		<button id="open-db">Choose Folder...</button>
+		<button id="open-db">Choose Folder…</button>
 		<input id="new-item"
 			type="text"
 			placeholder="New todo item…"
@@ -79,6 +101,14 @@
 			disabled>Add</button>
 		<button id="clear-console"
 			disabled>Clear Console</button>
+		<button id="migrate-up"
+			disabled>Migrate to v2</button>
+		<button id="migrate-down"
+			disabled>Rollback to v1</button>
+		<button id="seed"
+			disabled>Seed</button>
+		<button id="delete-db"
+			disabled>Delete DB</button>
 	</div>
 
 	<ul id="todo-list"></ul>
@@ -89,44 +119,148 @@
 	<script>
 		let SQL, db, dirHandle, fileHandle;
 
-		// 1) Load SQL.js
+		// 50-item stock pool
+		const stockTodos = [
+			"Summon printer dragon", "Warp TPS reports", "Pet the quantum stapler",
+			"Feed coffee to the server", "Negotiate with office cactus",
+			"Teleport chair to Mars", "Encrypt snack signals", "Chase rogue spreadsheet",
+			"Debug existential crisis", "Train squirrels as interns",
+			"Calibrate moon cheese sensor", "Refactor unicorn module",
+			"Optimize office trampoline", "Audit invisible ink ledger",
+			"Bake cookies for the server", "Implement reverse psychology",
+			"Schedule time travel session", "Translate binary poetry",
+			"Synchronize office shadows", "Mute the screaming printer",
+			"Juggle virtual bananas", "Amplify silent alarms",
+			"Untangle spaghetti code", "Map the coffee galaxy",
+			"Harvest pixel rainbows", "Frame error 404 art",
+			"Debug haunting poltergeists", "Assemble LEGO database",
+			"Train AI pet rock", "Reverse engineer sarcasm",
+			"Program dancing lights", "Stop time anomalies",
+			"Bake a binary cake", "Conquer post-it note fort",
+			"Document secret handshake", "Massage fractal diagrams",
+			"Brew invisibility potion", "Clone rubber duck debugger",
+			"Animate sleeping desks", "Summon tax form genie",
+			"Prototype teleporting pen", "Encrypt ham sandwich",
+			"Interview office spider", "Simulate Monday morning",
+			"Debug time paradox", "Paint ASCII mural",
+			"Generate pun backlog", "Synchronize cat memes",
+			"Escape infinite loop", "Virtualize snack break"
+		];
+
+		// Load SQL.js
 		initSqlJs({ locateFile: f => `https://cdnjs.cloudflare.com/ajax/libs/sql.js/1.6.2/${f}` })
 			.then(lib => { SQL = lib; })
 			.catch(err => console.error("Failed to load SQL.js:", err));
 
-		// 2) Utility: execute SQL, log it, persist, then re-render
-		async function execAndPersist(sql, params = []) {
-			// 2a) Log
-			const consoleEl = document.getElementById('sql-console');
-			consoleEl.textContent += `> ${sql} ${JSON.stringify(params)}\n`;
-
-			// 2b) Execute
+		// Helper: log → exec → persist → (re)render
+		async function execAndPersist(sql, params = [], skipRender = false) {
+			document.getElementById('sql-console')
+				.textContent += `> ${sql} ${JSON.stringify(params)}\n\n`;
 			db.run(sql, params);
+			const blob = new Blob([db.export()], { type: 'application/x-sqlite3' });
+			const w = await fileHandle.createWritable();
+			await w.write(blob);
+			await w.close();
+			if (!skipRender) renderList();
+		}
 
-			// 2c) Persist immediately
-			const data = db.export();
-			const blob = new Blob([data], { type: 'application/x-sqlite3' });
-			const writable = await fileHandle.createWritable();
-			await writable.write(blob);
-			await writable.close();
+		// Seed 5 random todos from stockTodos
+		async function seedTodos() {
+			// shuffle & pick first 5
+			const picks = stockTodos
+				.map(v => ({ v, r: Math.random() }))
+				.sort((a, b) => a.r - b.r)
+				.slice(0, 5)
+				.map(o => o.v);
 
-			// 2d) Update UI
+			for (const item of picks) {
+				const [[maxPos]] = db.exec("SELECT COALESCE(MAX(position),0) FROM todos")[0].values;
+				await execAndPersist(
+					"INSERT INTO todos (content, position) VALUES (?, ?)",
+					[item, maxPos + 1]
+				);
+			}
+		}
+
+		// Migrate up: add done column
+		async function migrateUp() {
+			await execAndPersist(
+				"ALTER TABLE todos ADD COLUMN done INTEGER NOT NULL DEFAULT 0"
+			);
+			await execAndPersist("PRAGMA user_version = 2");
+			updateMigrationControls();
+		}
+
+		// Migrate down: drop done via table rebuild
+		async function migrateDown() {
+			const steps = [
+				"BEGIN TRANSACTION;",
+				"CREATE TABLE todos_new (id INTEGER PRIMARY KEY AUTOINCREMENT, content TEXT NOT NULL, position INTEGER NOT NULL);",
+				"INSERT INTO todos_new (id, content, position) SELECT id, content, position FROM todos;",
+				"DROP TABLE todos;",
+				"ALTER TABLE todos_new RENAME TO todos;",
+				"PRAGMA user_version = 1;",
+				"COMMIT;"
+			];
+			const consoleEl = document.getElementById('sql-console');
+			for (const s of steps) {
+				consoleEl.textContent += `> ${s}\n`;
+				db.exec(s);
+			}
+			const blob = new Blob([db.export()], { type: 'application/x-sqlite3' });
+			const w = await fileHandle.createWritable();
+			await w.write(blob);
+			await w.close();
+			updateMigrationControls();
 			renderList();
 		}
 
-		// 3) Render the todo list from the DB
+		// Enable/disable migrate buttons
+		function updateMigrationControls() {
+			const ver = db.exec("PRAGMA user_version")[0].values[0][0];
+			document.getElementById('migrate-up').disabled = ver >= 2;
+			document.getElementById('migrate-down').disabled = ver < 2;
+		}
+
+		// Delete DB file + reload
+		async function deleteDatabase() {
+			await dirHandle.removeEntry('database.sqlite');
+			location.reload();
+		}
+
+		// Render list (v1 vs v2)
 		function renderList() {
 			const out = document.getElementById('todo-list');
 			out.innerHTML = '';
-			const res = db.exec("SELECT id, content FROM todos ORDER BY position");
-			if (!res[0]) return;
-			for (const [id, content] of res[0].values) {
+			const ver = db.exec("PRAGMA user_version")[0].values[0][0];
+			let rows = [];
+			if (ver >= 2) {
+				const res = db.exec("SELECT id, content, done FROM todos ORDER BY position");
+				rows = res[0]?.values || [];
+			} else {
+				const res = db.exec("SELECT id, content FROM todos ORDER BY position");
+				rows = res[0]?.values.map(r => [r[0], r[1], 0]) || [];
+			}
+
+			for (const [id, content, done] of rows) {
 				const li = document.createElement('li');
-				li.textContent = content;
+				if (ver >= 2 && done) li.classList.add('done');
+
+				const chk = document.createElement('input');
+				chk.type = 'checkbox';
+				chk.checked = !!done;
+				chk.style = ver < 2 ? 'display:none' : '';
+				chk.onchange = () =>
+					execAndPersist("UPDATE todos SET done = ? WHERE id = ?", [chk.checked ? 1 : 0, id]);
+
+				const txt = document.createElement('span');
+				txt.className = 'content';
+				txt.textContent = content;
+
 				const btns = document.createElement('span');
 				btns.className = 'btns';
 
-				// ↑
+				// Move up
 				const up = document.createElement('button');
 				up.textContent = '↑';
 				up.onclick = async () => {
@@ -138,17 +272,15 @@
 					if (!above[0]) return;
 					const [bId, bPos] = above[0].values[0];
 					await execAndPersist(
-						`UPDATE todos
-				 SET position = CASE id
-				   WHEN ? THEN ?
-				   WHEN ? THEN ?
-				 END
-				 WHERE id IN (?, ?)`,
+						`UPDATE todos SET position = CASE id
+               WHEN ? THEN ?
+               WHEN ? THEN ?
+             END WHERE id IN (?, ?)`,
 						[id, bPos, bId, pos, id, bId]
 					);
 				};
 
-				// ↓
+				// Move down
 				const down = document.createElement('button');
 				down.textContent = '↓';
 				down.onclick = async () => {
@@ -160,112 +292,96 @@
 					if (!below[0]) return;
 					const [bId, bPos] = below[0].values[0];
 					await execAndPersist(
-						`UPDATE todos
-				 SET position = CASE id
-				   WHEN ? THEN ?
-				   WHEN ? THEN ?
-				 END
-				 WHERE id IN (?, ?)`,
+						`UPDATE todos SET position = CASE id
+               WHEN ? THEN ?
+               WHEN ? THEN ?
+             END WHERE id IN (?, ?)`,
 						[id, bPos, bId, pos, id, bId]
 					);
 				};
 
-				// ✕
+				// Delete item
 				const del = document.createElement('button');
 				del.textContent = '✕';
-				del.onclick = async () => {
-					await execAndPersist("DELETE FROM todos WHERE id = ?", [id]);
-				};
+				del.onclick = () =>
+					execAndPersist("DELETE FROM todos WHERE id = ?", [id]);
 
 				btns.append(up, down, del);
-				li.append(btns);
+				li.append(chk, txt, btns);
 				out.append(li);
 			}
 		}
 
-		// 4) Add a new todo
+		// Add new todo
 		async function addItem(text) {
 			if (!text.trim()) return;
 			const [[maxPos]] = db.exec("SELECT COALESCE(MAX(position),0) FROM todos")[0].values;
-			await execAndPersist(
-				"INSERT INTO todos (content, position) VALUES (?, ?)",
-				[text, maxPos + 1]
-			);
+			const ver = db.exec("PRAGMA user_version")[0].values[0][0];
+			if (ver >= 2) {
+				await execAndPersist(
+					"INSERT INTO todos (content, position, done) VALUES (?, ?, ?)",
+					[text, maxPos + 1, 0]
+				);
+			} else {
+				await execAndPersist(
+					"INSERT INTO todos (content, position) VALUES (?, ?)",
+					[text, maxPos + 1]
+				);
+			}
 			document.getElementById('new-item').value = '';
 		}
 
-		// 5) Open/Create database.sqlite & optionally seed
+		// Open/create DB & seed/migrate to v1
 		async function openDatabase() {
-			// pick a folder
 			dirHandle = await window.showDirectoryPicker();
-			// get (or create) database.sqlite
 			fileHandle = await dirHandle.getFileHandle('database.sqlite', { create: true });
+			const u8 = new Uint8Array(await (await fileHandle.getFile()).arrayBuffer());
+			db = u8.byteLength ? new SQL.Database(u8) : new SQL.Database();
 
-			// read existing contents
-			const file = await fileHandle.getFile();
-			const buf = await file.arrayBuffer();
-			const u8 = new Uint8Array(buf);
-
-			if (u8.byteLength) {
-				// existing DB → just load
-				db = new SQL.Database(u8);
-
-			} else {
-				// brand-new DB → create schema + seed via execAndPersist
-				db = new SQL.Database();
-
-				// CREATE TABLE
+			// Check for existing todos table
+			const exists = db.exec(
+				"SELECT name FROM sqlite_master WHERE type='table' AND name='todos';"
+			)[0];
+			if (!exists) {
+				// Create v1 schema
 				await execAndPersist(
 					`CREATE TABLE todos (
-				 id INTEGER PRIMARY KEY AUTOINCREMENT,
-				 content TEXT NOT NULL,
-				 position INTEGER NOT NULL
-			   );`
+             id       INTEGER PRIMARY KEY AUTOINCREMENT,
+             content  TEXT NOT NULL,
+             position INTEGER NOT NULL
+           );`
 				);
-
-				// weird/chaotic seed items
-				const seed = [
-					"Summon printer dragon",
-					"Warp TPS reports",
-					"Pet the quantum stapler",
-					"Feed coffee to the server",
-					"Negotiate with office cactus",
-					"Teleport chair to Mars",
-					"Encrypt snack signals",
-					"Chase rogue spreadsheet",
-					"Debug existential crisis",
-					"Train squirrels as interns"
-				];
-
-				// INSERT each seed row
-				for (let i = 0; i < seed.length; i++) {
-					await execAndPersist(
-						"INSERT INTO todos (content, position) VALUES (?, ?)",
-						[seed[i], i + 1]
-					);
+				// Seed initial 5
+				await seedTodos();
+				// Mark version=1 without render
+				await execAndPersist("PRAGMA user_version = 1", [], true);
+			} else {
+				// Ensure user_version ≥1
+				let ver = db.exec("PRAGMA user_version")[0].values[0][0];
+				if (ver < 1) {
+					await execAndPersist("PRAGMA user_version = 1", [], true);
 				}
 			}
 
-			// enable the rest of the UI
-			document.getElementById('new-item').disabled = false;
-			document.getElementById('add-item').disabled = false;
-			document.getElementById('clear-console').disabled = false;
+			// Enable controls
+			['new-item', 'add-item', 'clear-console', 'migrate-up', 'migrate-down', 'seed', 'delete-db']
+				.forEach(id => document.getElementById(id).disabled = false);
 
-			// render whatever’s in the DB
+			updateMigrationControls();
 			renderList();
 		}
 
-		// 6) Clear console button
-		document.getElementById('clear-console').onclick = () => {
-			document.getElementById('sql-console').textContent = '';
-		};
-
-		// 7) Wire up the buttons and Enter key
+		// Wire up events
 		document.getElementById('open-db').onclick = openDatabase;
-		document.getElementById('add-item').onclick = () =>
-			addItem(document.getElementById('new-item').value);
+		document.getElementById('add-item').onclick = () => addItem(document.getElementById('new-item').value);
 		document.getElementById('new-item')
 			.addEventListener('keydown', e => { if (e.key === 'Enter') addItem(e.target.value); });
+		document.getElementById('clear-console').onclick = () => { document.getElementById('sql-console').textContent = ''; };
+		document.getElementById('migrate-up').onclick = migrateUp;
+		document.getElementById('migrate-down').onclick = migrateDown;
+		document.getElementById('seed').onclick = seedTodos;
+		document.getElementById('delete-db').onclick = deleteDatabase;
 	</script>
 </body>
+
 </html>
